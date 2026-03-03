@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { STYLES } from '../config/styles';
 
 interface StyleSelectorProps {
@@ -22,11 +22,11 @@ export default function StyleSelector({
 }: StyleSelectorProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const sortedKeys = Object.keys(STYLES).sort((a, b) => {
+  const sortedKeys = useMemo(() => Object.keys(STYLES).sort((a, b) => {
     const aStarred = starredStyles.includes(a) ? 0 : 1;
     const bStarred = starredStyles.includes(b) ? 0 : 1;
     return aStarred - bStarred;
-  });
+  }), [starredStyles]);
 
   return (
     <div className="h-11 bg-white border-b border-border-light shrink-0 flex items-center">
