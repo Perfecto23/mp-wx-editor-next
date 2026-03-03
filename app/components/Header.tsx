@@ -2,7 +2,7 @@
 
 import React from 'react';
 
-export default function Header() {
+export default React.memo(function Header() {
   return (
     <header className="flex items-center justify-between h-12 px-4 bg-white border-b border-border-light shrink-0">
       <div className="flex items-center gap-2.5">
@@ -28,4 +28,4 @@ export default function Header() {
       </a>
     </header>
   );
-}
+});

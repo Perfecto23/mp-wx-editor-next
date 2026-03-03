@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import MarkdownIt from 'markdown-it';
 import { patchMarkdownScanner } from '../lib/markdown-patches';
 import { preprocessMarkdown } from '../lib/preprocess';
@@ -31,10 +31,44 @@ export function useMarkdownRenderer(
   // 初始化 markdown-it（仅一次）
   useEffect(() => {
     const initMarkdown = async () => {
-      let hljs: typeof import('highlight.js').default | null = null;
+      let hljs: typeof import('highlight.js/lib/core').default | null = null;
       try {
-        const mod = await import('highlight.js');
-        hljs = mod.default;
+        const [{ default: core }, ...langs] = await Promise.all([
+          import('highlight.js/lib/core'),
+          import('highlight.js/lib/languages/javascript'),
+          import('highlight.js/lib/languages/typescript'),
+          import('highlight.js/lib/languages/python'),
+          import('highlight.js/lib/languages/java'),
+          import('highlight.js/lib/languages/go'),
+          import('highlight.js/lib/languages/rust'),
+          import('highlight.js/lib/languages/cpp'),
+          import('highlight.js/lib/languages/c'),
+          import('highlight.js/lib/languages/bash'),
+          import('highlight.js/lib/languages/shell'),
+          import('highlight.js/lib/languages/json'),
+          import('highlight.js/lib/languages/xml'),
+          import('highlight.js/lib/languages/css'),
+          import('highlight.js/lib/languages/sql'),
+          import('highlight.js/lib/languages/yaml'),
+          import('highlight.js/lib/languages/markdown'),
+          import('highlight.js/lib/languages/diff'),
+          import('highlight.js/lib/languages/plaintext'),
+        ]);
+        const langNames = [
+          'javascript', 'typescript', 'python', 'java', 'go', 'rust',
+          'cpp', 'c', 'bash', 'shell', 'json', 'xml', 'css', 'sql',
+          'yaml', 'markdown', 'diff', 'plaintext',
+        ];
+        langs.forEach((lang, i) => core.registerLanguage(langNames[i], lang.default));
+        // Register common aliases
+        core.registerAliases(['js', 'jsx'], { languageName: 'javascript' });
+        core.registerAliases(['ts', 'tsx'], { languageName: 'typescript' });
+        core.registerAliases(['py'], { languageName: 'python' });
+        core.registerAliases(['sh', 'zsh'], { languageName: 'bash' });
+        core.registerAliases(['html'], { languageName: 'xml' });
+        core.registerAliases(['yml'], { languageName: 'yaml' });
+        core.registerAliases(['rs'], { languageName: 'rust' });
+        hljs = core;
       } catch {
         console.warn('highlight.js 加载失败，代码块将不高亮');
       }
@@ -73,38 +107,49 @@ export function useMarkdownRenderer(
     initMarkdown();
   }, []);
 
-  // 渲染（markdownInput、currentStyle 变化时触发）
-  useEffect(() => {
+  // 渲染函数（可被防抖调用）
+  const renderMarkdown = useCallback(async (input: string, style: string) => {
     if (!mdRef.current || !mdReady) return;
 
-    if (!markdownInput.trim()) {
+    if (!input.trim()) {
       setRenderedContent('');
       return;
     }
 
     const currentRender = ++renderCountRef.current;
 
-    const render = async () => {
-      try {
-        const preprocessed = preprocessMarkdown(markdownInput);
-        let html = mdRef.current!.render(preprocessed);
-        html = await processImageProtocol(html, imageStore, imageUrlCacheRef.current);
+    try {
+      const preprocessed = preprocessMarkdown(input);
+      let html = mdRef.current!.render(preprocessed);
+      html = await processImageProtocol(html, imageStore, imageUrlCacheRef.current);
 
-        const styleConfig = STYLES[currentStyle];
-        if (styleConfig) {
-          html = applyInlineStyles(html, styleConfig.styles);
-        }
-
-        if (currentRender === renderCountRef.current) {
-          setRenderedContent(html);
-        }
-      } catch (error) {
-        console.error('Markdown 渲染失败:', error);
+      const styleConfig = STYLES[style];
+      if (styleConfig) {
+        html = applyInlineStyles(html, styleConfig.styles);
       }
-    };
 
-    render();
-  }, [markdownInput, currentStyle, imageStore, mdReady]);
+      if (currentRender === renderCountRef.current) {
+        setRenderedContent(html);
+      }
+    } catch (error) {
+      console.error('Markdown 渲染失败:', error);
+    }
+  }, [imageStore, mdReady]);
+
+  // 防抖渲染（markdownInput 变化时延迟 150ms，currentStyle 变化时立即渲染）
+  const prevStyleRef = useRef(currentStyle);
+  useEffect(() => {
+    const isStyleChange = prevStyleRef.current !== currentStyle;
+    prevStyleRef.current = currentStyle;
+
+    // 样式切换立即渲染，内容输入防抖 150ms
+    const delay = isStyleChange ? 0 : 150;
+    const timer = setTimeout(() => {
+      renderMarkdown(markdownInput, currentStyle);
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [markdownInput, currentStyle, renderMarkdown]);
 
   // 清理 Object URLs
   useEffect(() => {
