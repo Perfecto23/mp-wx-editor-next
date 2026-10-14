@@ -6,6 +6,7 @@ import { patchMarkdownScanner } from '../lib/markdown-patches';
 import { preprocessMarkdown } from '../lib/preprocess';
 import { processImageProtocol } from '../lib/image-protocol';
 import { applyInlineStyles } from '../lib/inline-styles';
+import { sanitizeHtml } from '../lib/sanitize-html';
 import { STYLES } from '../config/styles';
 import { ImageStore } from '../lib/image-store';
 
@@ -109,18 +110,14 @@ export function useMarkdownRenderer(
 
   // 渲染函数（可被防抖调用）
   const renderMarkdown = useCallback(async (input: string, style: string) => {
-    if (!mdRef.current || !mdReady) return;
-
-    if (!input.trim()) {
-      setRenderedContent('');
-      return;
-    }
+    if (!mdRef.current || !mdReady) throw new Error('编辑器还在准备，请稍后再试');
 
     const currentRender = ++renderCountRef.current;
+    if (!input.trim()) { setRenderedContent(''); return ''; }
 
     try {
       const preprocessed = preprocessMarkdown(input);
-      let html = mdRef.current!.render(preprocessed);
+      let html = sanitizeHtml(mdRef.current!.render(preprocessed));
       html = await processImageProtocol(html, imageStore, imageUrlCacheRef.current);
 
       const styleConfig = STYLES[style];
@@ -131,8 +128,10 @@ export function useMarkdownRenderer(
       if (currentRender === renderCountRef.current) {
         setRenderedContent(html);
       }
+      return html;
     } catch (error) {
       console.error('Markdown 渲染失败:', error);
+      throw error;
     }
   }, [imageStore, mdReady]);
 
@@ -145,11 +144,11 @@ export function useMarkdownRenderer(
     // 样式切换立即渲染，内容输入防抖 150ms
     const delay = isStyleChange ? 0 : 150;
     const timer = setTimeout(() => {
-      renderMarkdown(markdownInput, currentStyle);
+      if (mdReady) void renderMarkdown(markdownInput, currentStyle).catch(() => {});
     }, delay);
 
     return () => clearTimeout(timer);
-  }, [markdownInput, currentStyle, renderMarkdown]);
+  }, [markdownInput, currentStyle, renderMarkdown, mdReady]);
 
   // 清理 Object URLs
   useEffect(() => {
@@ -165,5 +164,5 @@ export function useMarkdownRenderer(
     };
   }, []);
 
-  return renderedContent;
+  return { renderedContent, renderNow: renderMarkdown };
 }

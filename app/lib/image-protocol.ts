@@ -39,6 +39,7 @@ export async function processImageProtocol(
           if (objectURL) {
             imageUrlCache[imageId] = objectURL;
           } else {
+            img.setAttribute('data-image-missing', 'true');
             console.warn(`图片不存在: ${imageId}`);
             img.setAttribute('src', MISSING_IMAGE_PLACEHOLDER);
             continue;
@@ -48,6 +49,7 @@ export async function processImageProtocol(
         img.setAttribute('src', objectURL);
         img.setAttribute('data-image-id', imageId);
       } catch (error) {
+        img.setAttribute('data-image-missing', 'true');
         console.error(`加载图片失败 (${imageId}):`, error);
         img.setAttribute('src', ERROR_IMAGE_PLACEHOLDER);
       }

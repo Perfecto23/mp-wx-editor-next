@@ -50,21 +50,34 @@ export class ImageStore {
 
   async saveImage(id: string, blob: Blob, metadata: ImageMetadata): Promise<void> {
     if (!this.db) throw new Error('数据库未初始化');
+    await new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction([this.storeName], 'readwrite');
+      tx.objectStore(this.storeName).put({ id, blob, metadata, createdAt: Date.now() });
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error ?? new Error('图片事务已中止'));
+    });
+  }
 
-    return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction([this.storeName], 'readwrite');
-      const store = transaction.objectStore(this.storeName);
+  async writeImages(images: { id: string; blob: Blob }[]): Promise<void> {
+    if (!this.db) throw new Error('数据库未初始化');
+    await new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction([this.storeName], 'readwrite');
+      for (const { id, blob } of images) tx.objectStore(this.storeName).add({
+        id, blob, createdAt: Date.now(), metadata: { name: id, originalSize: blob.size,
+          compressedSize: blob.size, compressionRatio: '0%', mimeType: blob.type },
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error ?? new Error('图片导入已中止'));
+    });
+  }
 
-      const record: StoredImage = {
-        id,
-        blob,
-        metadata,
-        createdAt: Date.now()
-      };
-
-      const request = store.put(record);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(new Error('保存图片失败: ' + request.error?.message));
+  async removeImages(ids: string[]): Promise<void> {
+    if (!this.db) throw new Error('数据库未初始化');
+    await new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction([this.storeName], 'readwrite');
+      for (const id of ids) tx.objectStore(this.storeName).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error ?? new Error('图片清理已中止'));
     });
   }
 

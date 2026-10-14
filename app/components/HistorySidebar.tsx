@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ArticleHistory } from '../types';
 import { formatHistoryDate } from '../lib/utils';
 
@@ -21,6 +21,12 @@ export default function HistorySidebar({
   onLoad,
   onDelete,
 }: HistorySidebarProps) {
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [open, onClose]);
   if (!open) return null;
 
   return (
@@ -90,7 +96,7 @@ export default function HistorySidebar({
                       e.stopPropagation();
                       onDelete(article.id);
                     }}
-                    className="flex items-center justify-center w-7 h-7 rounded-md opacity-0 group-hover:opacity-100 text-tertiary hover:text-error hover:bg-error/5 transition-all duration-150 cursor-pointer shrink-0"
+                    className="flex items-center justify-center w-7 h-7 rounded-md opacity-100 text-tertiary hover:text-error hover:bg-error/5 transition-all duration-150 cursor-pointer shrink-0"
                     title="删除"
                     aria-label="删除此记录"
                   >
