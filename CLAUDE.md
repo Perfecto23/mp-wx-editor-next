@@ -26,7 +26,8 @@ app/
 │   ├── useClipboard.ts         复制到公众号（Grid→Table + Base64）
 │   ├── useImageStore.ts        IndexedDB 图片存储
 │   ├── useImageCompressor.ts   Canvas 图片压缩
-│   ├── useArticleHistory.ts    文章历史记录（localStorage）
+│   ├── useArticleHistory.ts    独立历史快照（localStorage）
+│   ├── useDraft.ts             草稿保存状态、离开保存与冲突保护
 │   ├── useStyleManager.ts      样式选择/收藏/持久化
 │   └── useTurndown.ts          HTML→Markdown 转换
 ├── lib/               7 个工具模块
@@ -68,7 +69,7 @@ copyToClipboard()
     → convertGridToTable()        CSS Grid → HTML Table
     → convertImageToBase64()      IndexedDB Blob → Base64
     → Section 容器包裹
-    → 代码块简化 + 列表扁平化
+    → 代码块简化 + 保留列表/链接语义与结构化纯文本
     → ClipboardItem(text/html + text/plain)
 ```
 
@@ -146,7 +147,7 @@ copyToClipboard()
 | localStorage | `markdownInput` | 当前编辑内容 |
 | localStorage | `currentStyle` | 当前选中样式 |
 | localStorage | `starredStyles` | 收藏的样式列表 (JSON) |
-| localStorage | `articleHistory` | 文章历史记录 (JSON, 最多 20 篇) |
+| localStorage | `articleHistory` | 文章历史快照 (JSON, 上限 1000 条，不自动淘汰) |
 
 ---
 
@@ -198,3 +199,7 @@ npm run lint     # ESLint 检查
 
 - `app/lib/markdown-patches.ts` — markdown-it delimiter 扫描器补丁
 - `app/lib/preprocess.ts` — 飞书等来源的格式修复
+
+## 备份与验证
+
+备份由 `app/lib/backup.ts` 负责，沿用现有存储结构；导入先校验实际图片字节，再作为副本写入，禁止覆盖现有图片。`BackupControls` 提供预检确认。`sanitize-html.ts` 使用 DOMPurify 清洗用户内容。测试和运行步骤见 README 的“验证”一节。

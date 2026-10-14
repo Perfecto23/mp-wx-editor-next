@@ -59,3 +59,30 @@ app/
 ## 许可证
 
 MIT
+
+
+## 保存、历史与带图备份
+
+- 编辑内容自动保存到当前浏览器。状态栏显示真实保存结果；存储失败或另一标签页已改写草稿时，保留编辑器内容并阻止直接切换。可先使用“备份”导出当前内容。
+- “保存到历史记录”及成功复制会创建去重后的独立快照。加载旧稿前先保留当前内容，恢复后再保存不会覆盖原记录。历史不再自动截断到20条；1000条上限时会明确提示。
+- 顶栏“备份”导出当前草稿、全部历史和它们引用的本地图片，格式为版本化JSON。外链图片仍是外链；需要离线交付单篇文章可用“下载 HTML”。
+- “导入备份”先校验结构、图片SHA-256和引用完整性，再显示数量供确认。始终作为新副本导入，当前草稿保持原样；图片重新分配ID，避免覆盖现有图片。写入历史失败时回收本次新增图片。
+- 备份上限32MB、200张图、每图10MB；支持PNG/JPEG/GIF/WebP。文件保存在本机，不上传服务端。备份可能包含私人文章，请自行妥善保管。
+- 复制和HTML下载按点击时正文即时渲染，保留嵌套列表、链接与代码空白；缺失图片明确报错，剪贴板不可用时交付同内容的HTML文件。
+
+现有 `markdownInput`、`currentStyle`、`articleHistory` 和 IndexedDB `WechatEditorImages` 沿用，无需清空浏览器数据。上线回滚可使用EdgeOne上一部署；部署回滚不会回滚用户浏览器数据。上线前后均可导出备份。
+
+## 验证
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run lint
+pnpm run typecheck
+pnpm test
+pnpm run build
+pnpm exec playwright install chromium
+pnpm run test:e2e
+# 或 CHROMIUM_PATH=/path/to/chrome pnpm run test:e2e
+```
+
+浏览器测试覆盖即时复制、带图备份与空环境恢复、坏包拒绝、保存失败切换保护、手机视口与HTML安全处理。测试只使用合成数据；微信后台实际粘贴兼容性需在相应账号中另行确认。

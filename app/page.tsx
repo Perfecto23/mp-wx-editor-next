@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { ToastState } from './types';
 import { STYLES } from './config/styles';
-import { DEFAULT_EXAMPLE } from './config/default-example';
+import { useDraft } from './hooks/useDraft';
+import BackupControls from './components/BackupControls';
 
 // Hooks
 import { useImageStore } from './hooks/useImageStore';
@@ -25,15 +26,7 @@ import Toast from './components/Toast';
 
 export default function EditorPage() {
   // === 基础状态 ===
-  const [markdownInput, setMarkdownInput] = useState(() => {
-    if (typeof window === 'undefined') return '';
-    try {
-      const saved = localStorage.getItem('markdownInput');
-      return saved || DEFAULT_EXAMPLE;
-    } catch {
-      return DEFAULT_EXAMPLE;
-    }
-  });
+  const { content: markdownInput, setContent: setMarkdownInput, ready, status, flush } = useDraft();
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [toast, setToast] = useState<ToastState>({ show: false, message: '', type: 'info' });
@@ -47,9 +40,9 @@ export default function EditorPage() {
 
   const { imageStore } = useImageStore();
   const { compressor } = useImageCompressor();
-  const renderedContent = useMarkdownRenderer(markdownInput, currentStyle, imageStore);
+  const { renderedContent, renderNow } = useMarkdownRenderer(markdownInput, currentStyle, imageStore);
   const { copyToClipboard } = useClipboard(imageStore);
-  const { articles, save, load, remove, resetCurrentArticle } = useArticleHistory();
+  const { articles, save, remove, refresh, error: historyError } = useArticleHistory();
   const { turndown } = useTurndown();
 
   // === Toast ===
@@ -80,7 +73,7 @@ export default function EditorPage() {
       }
       return prev + text;
     });
-  }, []);
+  }, [setMarkdownInput]);
 
   const { handleSmartPaste, handleDrop } = useSmartPaste({
     imageStore,
@@ -90,61 +83,27 @@ export default function EditorPage() {
     onContentInsert: handleContentInsert,
   });
 
-  // === 自动保存（防抖 1 秒） ===
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        localStorage.setItem('markdownInput', markdownInput);
-      } catch (error) {
-        console.error('保存内容失败:', error);
-      }
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [markdownInput]);
-
-  // === 内容变化时重置文章 ID ===
-  const prevMarkdownRef = useRef(markdownInput);
-  useEffect(() => {
-    const prev = prevMarkdownRef.current;
-    prevMarkdownRef.current = markdownInput;
-
-    // 内容被清空
-    if (!markdownInput || !markdownInput.trim()) {
-      resetCurrentArticle();
-    }
-    // 从空/少内容粘贴大量内容（新文章）
-    else if ((!prev || prev.trim().length < 10) && markdownInput.trim().length > 100) {
-      resetCurrentArticle();
-    }
-  }, [markdownInput, resetCurrentArticle]);
-
   // === 复制到公众号 ===
-  const handleCopy = useCallback(async () => {
-    const result = await copyToClipboard(
-      renderedContent,
-      currentStyle,
-      (msg) => showToast(msg, 'success'),
-    );
-
-    if (result.success) {
-      setCopySuccess(true);
-      showToast('复制成功', 'success');
-
-      // 自动保存到历史记录
-      save(markdownInput, currentStyle);
-
-      setTimeout(() => setCopySuccess(false), 2000);
-    } else {
-      showToast(result.message, 'error');
-    }
-  }, [copyToClipboard, renderedContent, currentStyle, showToast, save, markdownInput]);
+  const handleCopy = useCallback(async (downloadOnly = false) => {
+    try {
+      // 按点击时的正文即时渲染，避免复制到防抖之前的旧内容。
+      const html = await renderNow(markdownInput, currentStyle);
+      const result = await copyToClipboard(html, currentStyle, undefined, downloadOnly);
+      if (result.success) {
+        setCopySuccess(!result.downloaded);
+        showToast(result.message, 'success');
+        if (!save(markdownInput, currentStyle)) showToast('内容已导出，但历史保存失败，请保留备份', 'error');
+        setTimeout(() => setCopySuccess(false), 2000);
+      } else showToast(result.message, 'error');
+    } catch (error) { showToast((error as Error).message, 'error'); }
+  }, [renderNow, markdownInput, currentStyle, copyToClipboard, save, showToast]);
 
   // === 文件上传 ===
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    if (!flush() || !save(markdownInput, currentStyle)) { showToast('当前内容尚未安全保存，请先备份', 'error'); event.target.value = ''; return; }
     const reader = new FileReader();
     reader.onload = (e) => {
       setMarkdownInput(e.target?.result as string);
@@ -155,11 +114,12 @@ export default function EditorPage() {
     reader.readAsText(file);
 
     event.target.value = '';
-  }, [showToast]);
+  }, [showToast, flush, save, markdownInput, currentStyle, setMarkdownInput]);
 
   // === 从历史加载 ===
   const handleLoadHistory = useCallback((id: string) => {
-    const article = load(id);
+    if (!flush() || !save(markdownInput, currentStyle)) { showToast('当前草稿保存失败，请先备份再切换', 'error'); return; }
+    const article = articles.find(a => a.id === id);
     if (article) {
       setMarkdownInput(article.content);
       if (article.style && STYLES[article.style]) {
@@ -168,7 +128,7 @@ export default function EditorPage() {
       setShowHistoryPanel(false);
       showToast('已加载文章', 'success');
     }
-  }, [load, setCurrentStyle, showToast]);
+  }, [articles, flush, save, markdownInput, currentStyle, setCurrentStyle, showToast, setMarkdownInput]);
 
   // === 保存历史 ===
   const handleSaveHistory = useCallback(() => {
@@ -182,10 +142,17 @@ export default function EditorPage() {
     }
   }, [save, markdownInput, currentStyle, showToast]);
 
+  if (!ready) return <div role="status" className="p-8">{status}</div>;
+
   return (
     <div className="flex flex-col h-screen bg-bg-main">
       {/* 顶栏 */}
       <Header />
+      <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border-light text-xs">
+        <span role="status" className="truncate">{historyError || status}</span>
+        <BackupControls content={markdownInput} style={currentStyle} imageStore={imageStore}
+          onImported={refresh} notify={showToast} />
+      </div>
 
       {/* 样式选择器 */}
       <StyleSelector
@@ -216,7 +183,8 @@ export default function EditorPage() {
             currentStyle={currentStyle}
             copySuccess={copySuccess}
             isStarred={isStarred(currentStyle)}
-            onCopy={handleCopy}
+            onCopy={() => void handleCopy()}
+            onDownload={() => void handleCopy(true)}
             onToggleStar={() => toggleStar(currentStyle)}
             onOpenHistory={() => setShowHistoryPanel(true)}
             onSaveHistory={handleSaveHistory}
@@ -230,7 +198,7 @@ export default function EditorPage() {
         styleName={(key) => STYLES[key]?.name ?? key}
         onClose={() => setShowHistoryPanel(false)}
         onLoad={handleLoadHistory}
-        onDelete={(id) => { remove(id); showToast('已删除', 'success'); }}
+        onDelete={(id) => { if (remove(id)) showToast('已删除', 'success'); }}
       />
 
       <Toast toast={toast} />

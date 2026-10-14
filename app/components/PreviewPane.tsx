@@ -8,6 +8,7 @@ interface PreviewPaneProps {
   copySuccess: boolean;
   isStarred: boolean;
   onCopy: () => void;
+  onDownload: () => void;
   onToggleStar: () => void;
   onOpenHistory: () => void;
   onSaveHistory: () => void;
@@ -18,6 +19,7 @@ export default function PreviewPane({
   copySuccess,
   isStarred,
   onCopy,
+  onDownload,
   onToggleStar,
   onOpenHistory,
   onSaveHistory,
@@ -68,6 +70,7 @@ export default function PreviewPane({
           </button>
         </div>
 
+        <button onClick={onDownload} className="text-xs text-accent cursor-pointer" aria-label="下载 HTML">下载 HTML</button>
         <button
           onClick={onCopy}
           disabled={!content}

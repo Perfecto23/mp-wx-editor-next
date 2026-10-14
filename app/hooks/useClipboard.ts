@@ -4,6 +4,8 @@ import { useCallback } from 'react';
 import { ImageStore } from '../lib/image-store';
 import { convertGridToTable } from '../lib/grid-to-table';
 import { extractBackgroundColor } from '../lib/utils';
+import { sanitizeHtml } from '../lib/sanitize-html';
+import { downloadFile } from '../lib/download';
 import { STYLES } from '../config/styles';
 
 /**
@@ -16,7 +18,7 @@ import { STYLES } from '../config/styles';
  * 3. 图片 → Base64
  * 4. Section 背景色包裹
  * 5. 代码块简化
- * 6. 列表项扁平化
+ * 6. 保留列表层级与行内语义
  * 7. 引用块深色模式适配
  * 8. 生成 ClipboardItem
  * 9. clipboard.write
@@ -28,6 +30,7 @@ export function useClipboard(imageStore: ImageStore | null) {
    */
   const convertImageToBase64 = useCallback(async (imgElement: HTMLImageElement): Promise<string> => {
     const src = imgElement.getAttribute('src') || '';
+    if (imgElement.hasAttribute('data-image-missing')) throw new Error('本地图片缺失');
 
     // 已经是 Base64
     if (src.startsWith('data:')) return src;
@@ -73,14 +76,15 @@ export function useClipboard(imageStore: ImageStore | null) {
     renderedContent: string,
     currentStyle: string,
     onProgress?: (msg: string) => void,
-  ): Promise<{ success: boolean; message: string }> => {
+    downloadOnly = false,
+  ): Promise<{ success: boolean; message: string; downloaded?: boolean }> => {
     if (!renderedContent) {
       return { success: false, message: '没有内容可复制' };
     }
 
     try {
       const parser = new DOMParser();
-      const doc = parser.parseFromString(renderedContent, 'text/html');
+      const doc = parser.parseFromString(sanitizeHtml(renderedContent), 'text/html');
 
       // Step 1: Grid → Table
       convertGridToTable(doc);
@@ -90,14 +94,12 @@ export function useClipboard(imageStore: ImageStore | null) {
       if (images.length > 0) {
         onProgress?.(`正在处理 ${images.length} 张图片...`);
 
-        let successCount = 0;
         let failCount = 0;
 
         const imagePromises = Array.from(images).map(async (img) => {
           try {
             const base64 = await convertImageToBase64(img as HTMLImageElement);
             img.setAttribute('src', base64);
-            successCount++;
           } catch (error) {
             console.error('图片转换失败:', img.getAttribute('src'), error);
             failCount++;
@@ -107,7 +109,7 @@ export function useClipboard(imageStore: ImageStore | null) {
         await Promise.all(imagePromises);
 
         if (failCount > 0) {
-          onProgress?.(`图片处理完成：${successCount} 成功，${failCount} 失败（保留原链接）`);
+          throw new Error(`${failCount} 张图片无法读取，请检查图片后再复制或下载`);
         }
       }
 
@@ -198,15 +200,6 @@ export function useClipboard(imageStore: ImageStore | null) {
         }
       });
 
-      // Step 5: 列表项扁平化
-      const listItems = doc.querySelectorAll('li');
-      listItems.forEach(li => {
-        let text = li.textContent || '';
-        text = text.replace(/\n/g, ' ').replace(/\r/g, ' ').replace(/\s+/g, ' ').trim();
-        li.innerHTML = '';
-        li.textContent = text;
-      });
-
       // Step 6: 引用块深色模式适配
       const blockquotes = doc.querySelectorAll('blockquote');
       blockquotes.forEach(blockquote => {
@@ -223,24 +216,39 @@ export function useClipboard(imageStore: ImageStore | null) {
 
       // Step 7: 写入剪贴板
       const simplifiedHTML = doc.body.innerHTML;
-      const plainText = doc.body.textContent || '';
+      const plainText = documentText(doc.body);
 
       const htmlBlob = new Blob([simplifiedHTML], { type: 'text/html' });
       const textBlob = new Blob([plainText], { type: 'text/plain' });
 
-      const clipboardItem = new ClipboardItem({
-        'text/html': htmlBlob,
-        'text/plain': textBlob,
-      });
-
-      await navigator.clipboard.write([clipboardItem]);
-
-      return { success: true, message: '复制成功' };
+      if (!downloadOnly && navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob })]);
+          return { success: true, message: '复制成功' };
+        } catch { /* 浏览器拒绝时交付同一份离线 HTML。 */ }
+      }
+      downloadFile(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>文章</title><body>${simplifiedHTML}</body></html>`, `文章-${Date.now()}.html`, 'text/html;charset=utf-8');
+      return { success: true, message: downloadOnly ? '已下载 HTML' : '剪贴板不可用，已下载 HTML', downloaded: true };
     } catch (error) {
       console.error('复制失败:', error);
-      return { success: false, message: '复制失败' };
+      return { success: false, message: `导出失败：${(error as Error).message}` };
     }
   }, [convertImageToBase64]);
 
   return { copyToClipboard };
+}
+
+/** 纯文本保留列表层级与代码空白；HTML 保持原有语义节点。 */
+function documentText(root: Element, depth = 0): string {
+  return Array.from(root.childNodes).map(node => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+    if (!(node instanceof Element)) return '';
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'pre' || tag === 'code') return node.textContent || '';
+    if (tag === 'br') return '\n';
+    if (tag === 'ul' || tag === 'ol') return '\n' + Array.from(node.children).map((li, index) =>
+      '  '.repeat(depth) + (tag === 'ol' ? `${Number(node.getAttribute('start') || 1) + index}. ` : '- ') + documentText(li, depth + 1).trimEnd()).join('\n') + '\n';
+    const text = documentText(node, depth);
+    return ['p', 'div', 'section', 'blockquote', 'tr', 'h1', 'h2', 'h3'].includes(tag) ? text + '\n' : tag === 'td' || tag === 'th' ? text + '\t' : text;
+  }).join('');
 }

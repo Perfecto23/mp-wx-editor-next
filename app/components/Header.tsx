@@ -15,7 +15,7 @@ export default React.memo(function Header() {
       </div>
 
       <a
-        href="https://github.com/niceperfecto/mp-wx-editor"
+        href="https://github.com/Perfecto23/mp-wx-editor-next"
         target="_blank"
         rel="noopener noreferrer"
         className="flex items-center justify-center w-8 h-8 rounded-md text-tertiary hover:text-primary hover:bg-bg-secondary transition-colors duration-150 cursor-pointer"
